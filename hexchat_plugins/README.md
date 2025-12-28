@@ -1,4 +1,4 @@
-# Search DCC Staged FZF
+# DCC Search, Stage and Download Plugin
 
 **Version:** 2.9  
 **Description:** Stage search results from HexChat DCC transfers using FZF, review and edit selections, commit to chat, and maintain a history of downloads.
