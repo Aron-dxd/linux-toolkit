@@ -22,14 +22,13 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 STATE_DIR = DOWNLOAD_DIR / "state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-SELECTIONS_FILE = STATE_DIR / "selections.txt"  # staged selections
-STATE_FILE = STATE_DIR / "state.txt"           # tracks zips and extracted dirs
+SELECTIONS_FILE = STATE_DIR / "selections.txt"
+STATE_FILE = STATE_DIR / "state.txt"
 ZIP_WAIT_TIMEOUT = 30.0
 ZIP_POLL_INTERVAL = 0.5
 
 # -----------------------------
 # Command: /ss — Search and Stage
-# Sends a search query, waits for new zip, launches FZF
 # -----------------------------
 def ss_cmd(word, word_eol, userdata):
     if len(word) < 2:
@@ -42,12 +41,16 @@ def ss_cmd(word, word_eol, userdata):
     hexchat.command(f"say @search {query}")
     hexchat.prnt(f"[Search DCC] Sent search: {query}")
 
-    # Wait for zip in a background thread
-    threading.Thread(target=wait_for_zip, args=(existing_zips,), daemon=True).start()
+    threading.Thread(
+        target=wait_for_zip,
+        args=(existing_zips,),
+        daemon=True
+    ).start()
+
     return hexchat.EAT_ALL
 
 # -----------------------------
-# Wait for a new zip file to appear in DOWNLOAD_DIR
+# Wait for zip
 # -----------------------------
 def wait_for_zip(existing):
     start = time.time()
@@ -56,17 +59,17 @@ def wait_for_zip(existing):
         if new_zips:
             zip_path = next(iter(new_zips))
             try:
-                # Ensure zip is valid before processing
                 with zipfile.ZipFile(zip_path, "r"):
                     handle_zip(zip_path)
                     return
             except zipfile.BadZipFile:
                 pass
         time.sleep(ZIP_POLL_INTERVAL)
+
     hexchat.prnt("[Search DCC] No zip received (timeout).")
 
 # -----------------------------
-# Extract zip and handle txt files inside
+# Extract zip and launch fzf
 # -----------------------------
 def handle_zip(zip_path):
     extract_dir = DOWNLOAD_DIR / f"{zip_path.stem}_extracted"
@@ -75,7 +78,6 @@ def handle_zip(zip_path):
     with zipfile.ZipFile(zip_path) as z:
         z.extractall(extract_dir)
 
-    # Pick the first txt file for FZF selection
     txt_files = list(extract_dir.glob("*.txt"))
     if not txt_files:
         hexchat.prnt("[Search DCC] No .txt file found.")
@@ -84,36 +86,44 @@ def handle_zip(zip_path):
     launch_fzf(txt_files[0], zip_path, extract_dir)
 
 # -----------------------------
-# Launch fzf interface to stage selections
+# Launch fzf
 # -----------------------------
 def launch_fzf(txt_file, zip_path=None, extract_dir=None):
-    # Skip header lines (first 6) to show only meaningful entries
-    lines = txt_file.read_text(encoding="utf-8", errors="ignore").splitlines()[6:]
+    lines = txt_file.read_text(
+        encoding="utf-8",
+        errors="ignore"
+    ).splitlines()[6:]
+
     if not lines:
         hexchat.prnt("[Search DCC] No selectable entries.")
         return
 
-    input_data = "\n".join(lines)
+    with tempfile.NamedTemporaryFile("w+", delete=False) as tmp:
+        tmp.write("\n".join(lines) + "\n")
+        input_path = tmp.name
+
     fzf_cmd = f"""
-    printf "%s" {shlex.quote(input_data)} |
+    cat {shlex.quote(input_path)} |
     fzf --multi --prompt="TAB mark / ENTER stage: " \
-    > {shlex.quote(str(SELECTIONS_FILE))}
+    >> {shlex.quote(str(SELECTIONS_FILE))}
     """
 
-    # Open Kitty terminal for interactive selection
     subprocess.Popen([
-        "kitty", "--class", "SearchDCC", "--title", "Search DCC",
+        "kitty",
+        "--class", "SearchDCC",
+        "--title", "Search DCC",
         "-e", "sh", "-c", fzf_cmd
     ]).wait()
 
+    Path(input_path).unlink(missing_ok=True)
+
     if zip_path and extract_dir:
-        save_state(zip_path, extract_dir)  # track extracted files for cleanup
+        save_state(zip_path, extract_dir)
 
     hexchat.prnt("[Search DCC] Selections staged.")
 
 # -----------------------------
-# Command: /se — Review/Edit staged selections
-# Launches FZF for editing previously staged entries
+# /se — Review selections
 # -----------------------------
 def se_cmd(word, word_eol, userdata):
     if not SELECTIONS_FILE.exists():
@@ -125,35 +135,34 @@ def se_cmd(word, word_eol, userdata):
         hexchat.prnt("[Search DCC] Selections file empty.")
         return hexchat.EAT_ALL
 
-    # Temporary file for FZF editing
     with tempfile.NamedTemporaryFile("w+", delete=False) as tmp:
         tmp.write("\n".join(selections))
         tmp_path = tmp.name
 
     out_file = tmp_path + ".out"
     fzf_cmd = f"""
-    cat {shlex.quote(tmp_path)} | \
+    cat {shlex.quote(tmp_path)} |
     fzf --multi --prompt="Review staged selections: " \
-        > {shlex.quote(out_file)}
+    > {shlex.quote(out_file)}
     """
 
     subprocess.Popen([
-        "kitty", "--class", "SearchDCC", "--title", "Review Selections",
+        "kitty",
+        "--class", "SearchDCC",
+        "--title", "Review Selections",
         "-e", "sh", "-c", fzf_cmd
     ]).wait()
 
-    # Apply changes safely
     if Path(out_file).exists():
-        new_selections = Path(out_file).read_text().splitlines()
-        if new_selections:
-            SELECTIONS_FILE.write_text("\n".join(new_selections) + "\n")
-            hexchat.prnt(f"[Search DCC] Updated staged selections ({len(new_selections)} entries).")
+        new = Path(out_file).read_text().splitlines()
+        if new:
+            SELECTIONS_FILE.write_text("\n".join(new) + "\n")
+            hexchat.prnt(f"[Search DCC] Updated staged selections ({len(new)} entries).")
         else:
-            hexchat.prnt("[Search DCC] No changes made; staged selections remain unchanged.")
+            hexchat.prnt("[Search DCC] No changes made.")
 
 # -----------------------------
-# Command: /sd — Commit and send staged selections
-# Sends selections to chat, logs history, cleans up files
+# /sd — Send + background cleanup (non-blocking)
 # -----------------------------
 def sd_cmd(word, word_eol, userdata):
     if not SELECTIONS_FILE.exists():
@@ -165,37 +174,39 @@ def sd_cmd(word, word_eol, userdata):
         hexchat.prnt("[Search DCC] Selection file empty.")
         return hexchat.EAT_ALL
 
-    timestamp = datetime.now().strftime("[%d-%m ~ %I:%M %p]").lower()
+    def send_worker():
+        timestamp = datetime.now().strftime("[%d-%m ~ %I:%M %p]").lower()
 
-    # Load existing history
-    history_file = STATE_DIR / "history.txt"
-    history_lines = history_file.read_text().splitlines() if history_file.exists() else []
+        # Update history
+        history_file = STATE_DIR / "history.txt"
+        history_lines = history_file.read_text().splitlines() if history_file.exists() else []
+        new_history = [f"{timestamp} {line}" for line in reversed(selections)]
+        combined = (new_history + history_lines)[:50]
+        history_file.write_text("\n".join(combined) + "\n")
 
-    # Prepend new selections; keep latest 50 entries
-    new_history = [f"{timestamp} {line}" for line in reversed(selections)]
-    combined_history = (new_history + history_lines)[:50]
-    history_file.write_text("\n".join(combined_history) + "\n", encoding="utf-8")
+        # Send selections
+        for line in selections:
+            hexchat.command(f"say {line}")
+            time.sleep(0.5)
 
-    # Send staged selections to chat with delay to avoid flooding
-    for line in selections:
-        hexchat.command(f"say {line}")
-        time.sleep(0.4)
+        # Cleanup in background
+        cleanup_background()
+        hexchat.prnt("[Search DCC] Download batch completed and logged in history.")
 
-    cleanup_all()
-    hexchat.prnt("[Search DCC] Download batch completed and logged in history.")
+    threading.Thread(target=send_worker, daemon=True).start()
+
     return hexchat.EAT_ALL
 
 # -----------------------------
-# Command: /sc — Discard staged selections
-# Cleans up all staged selections and temporary files
+# /sc — Discard + background cleanup
 # -----------------------------
 def sc_cmd(word, word_eol, userdata):
-    cleanup_all()
+    cleanup_background()
     hexchat.prnt("[Search DCC] Staged selections discarded.")
     return hexchat.EAT_ALL
 
 # -----------------------------
-# Track state of zip/extracted directories
+# State tracking
 # -----------------------------
 def save_state(zip_path, extract_dir):
     with open(STATE_FILE, "a") as f:
@@ -203,7 +214,7 @@ def save_state(zip_path, extract_dir):
         f.write(f"DIR|{extract_dir}\n")
 
 # -----------------------------
-# Cleanup all staged selections and temporary files
+# Cleanup logic (blocking)
 # -----------------------------
 def cleanup_all():
     if STATE_FILE.exists():
@@ -212,7 +223,10 @@ def cleanup_all():
                 kind, path = line.split("|", 1)
                 p = Path(path)
                 if p.exists():
-                    shutil.rmtree(p) if kind == "DIR" else p.unlink()
+                    if kind == "DIR":
+                        shutil.rmtree(p)
+                    else:
+                        p.unlink()
             except Exception:
                 pass
 
@@ -220,7 +234,16 @@ def cleanup_all():
     STATE_FILE.unlink(missing_ok=True)
 
 # -----------------------------
-# Register HexChat commands
+# Cleanup wrapper (non-blocking)
+# -----------------------------
+def cleanup_background():
+    def worker():
+        cleanup_all()
+        hexchat.prnt("[Search DCC] Cleanup completed in background.")
+    threading.Thread(target=worker, daemon=True).start()
+
+# -----------------------------
+# Register commands
 # -----------------------------
 hexchat.hook_command("ss", ss_cmd)
 hexchat.hook_command("se", se_cmd)
