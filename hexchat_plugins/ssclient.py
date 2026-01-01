@@ -8,13 +8,14 @@ import subprocess
 import shlex
 import shutil
 import tempfile
+import re
 
-__module_name__ = "Search DCC Staged FZF"
-__module_version__ = "2.9"
-__module_description__ = "Stage search selections via fzf, review/edit, commit later"
+__module_name__ = "[Search DCC]"
+__module_version__ = "3.0"
+__module_description__ = "Stage search selections, sessioned history, strict verification"
 
 # -----------------------------
-# Paths and Constants
+# Paths
 # -----------------------------
 DOWNLOAD_DIR = Path.home() / "Downloads" / "ebooks"
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -24,11 +25,37 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 SELECTIONS_FILE = STATE_DIR / "selections.txt"
 STATE_FILE = STATE_DIR / "state.txt"
+HISTORY_FILE = STATE_DIR / "history.txt"
+
 ZIP_WAIT_TIMEOUT = 30.0
 ZIP_POLL_INTERVAL = 0.5
 
 # -----------------------------
-# Command: /ss — Search and Stage
+# Canonical comparison (ONLY spaces → underscores)
+# -----------------------------
+def canon_compare(s: str) -> str:
+    return s.strip().replace(" ", "_").lower()
+
+# -----------------------------
+# Extract requested filename from history line
+# -----------------------------
+def extract_requested_filename(line: str) -> str:
+    line = line.strip()
+
+    # remove INFO / HASH suffix
+    line = re.split(r"\s+::(INFO|HASH)::", line)[0]
+
+    # if pipe exists, filename is after it
+    if "|" in line:
+        line = line.split("|", 1)[1]
+
+    # remove leading !bot + ids
+    line = re.sub(r"^!\S+(?:\s+[%\w\-]+)*\s+", "", line)
+
+    return line.strip()
+
+# -----------------------------
+# /ss — Search
 # -----------------------------
 def ss_cmd(word, word_eol, userdata):
     if len(word) < 2:
@@ -50,7 +77,7 @@ def ss_cmd(word, word_eol, userdata):
     return hexchat.EAT_ALL
 
 # -----------------------------
-# Wait for zip
+# Wait for ZIP
 # -----------------------------
 def wait_for_zip(existing):
     start = time.time()
@@ -69,7 +96,7 @@ def wait_for_zip(existing):
     hexchat.prnt("[Search DCC] No zip received (timeout).")
 
 # -----------------------------
-# Extract zip and launch fzf
+# Handle ZIP
 # -----------------------------
 def handle_zip(zip_path):
     extract_dir = DOWNLOAD_DIR / f"{zip_path.stem}_extracted"
@@ -123,7 +150,7 @@ def launch_fzf(txt_file, zip_path=None, extract_dir=None):
     hexchat.prnt("[Search DCC] Selections staged.")
 
 # -----------------------------
-# /se — Review selections
+# /se — Review
 # -----------------------------
 def se_cmd(word, word_eol, userdata):
     if not SELECTIONS_FILE.exists():
@@ -158,11 +185,11 @@ def se_cmd(word, word_eol, userdata):
         if new:
             SELECTIONS_FILE.write_text("\n".join(new) + "\n")
             hexchat.prnt(f"[Search DCC] Updated staged selections ({len(new)} entries).")
-        else:
-            hexchat.prnt("[Search DCC] No changes made.")
+
+    return hexchat.EAT_ALL
 
 # -----------------------------
-# /sd — Send + background cleanup (non-blocking)
+# /sd — Send (creates SESSION)
 # -----------------------------
 def sd_cmd(word, word_eol, userdata):
     if not SELECTIONS_FILE.exists():
@@ -174,48 +201,94 @@ def sd_cmd(word, word_eol, userdata):
         hexchat.prnt("[Search DCC] Selection file empty.")
         return hexchat.EAT_ALL
 
-    def send_worker():
-        timestamp = datetime.now().strftime("[%d-%m ~ %I:%M %p]").lower()
+    def worker():
+        session_id = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
-        # Update history
-        history_file = STATE_DIR / "history.txt"
-        history_lines = history_file.read_text().splitlines() if history_file.exists() else []
-        new_history = [f"{timestamp} {line}" for line in reversed(selections)]
-        combined = (new_history + history_lines)[:50]
-        history_file.write_text("\n".join(combined) + "\n")
+        with open(HISTORY_FILE, "a") as f:
+            f.write(f"=== SESSION {session_id} ===\n")
+            for line in selections:
+                f.write(f"{line}\n")
+            f.write("=== END SESSION ===\n")
 
-        # Send selections
         for line in selections:
             hexchat.command(f"say {line}")
             time.sleep(0.5)
 
-        # Cleanup in background
         cleanup_background()
-        hexchat.prnt("[Search DCC] Download batch completed and logged in history.")
+        hexchat.prnt(f"[Search DCC] Session {session_id} sent.")
 
-    threading.Thread(target=send_worker, daemon=True).start()
+    threading.Thread(target=worker, daemon=True).start()
+    return hexchat.EAT_ALL
+
+# -----------------------------
+# /sv — Verify latest session (STRICT)
+# -----------------------------
+def sv_cmd(word, word_eol, userdata):
+    if not HISTORY_FILE.exists():
+        hexchat.prnt("[Search DCC] No history found.")
+        return hexchat.EAT_ALL
+
+    lines = HISTORY_FILE.read_text().splitlines()
+
+    sessions = []
+    current = None
+
+    for line in lines:
+        if line.startswith("=== SESSION"):
+            current = {"id": line.split()[2], "raw": []}
+        elif line.startswith("=== END SESSION"):
+            if current:
+                sessions.append(current)
+                current = None
+        elif current:
+            current["raw"].append(line)
+
+    if not sessions:
+        hexchat.prnt("[Search DCC] No sessions found.")
+        return hexchat.EAT_ALL
+
+    session = sessions[-1]
+
+    downloaded = {
+        canon_compare(f.name): f.name
+        for f in DOWNLOAD_DIR.iterdir()
+        if f.is_file()
+    }
+
+    missing = []
+
+    for raw in session["raw"]:
+        wanted = extract_requested_filename(raw)
+        key = canon_compare(wanted)
+
+        if key not in downloaded:
+            missing.append(raw)  
+
+    hexchat.prnt(f"[Search DCC] Summary for session {session['id']}:")
+
+    if not missing:
+        hexchat.prnt(f"[Search DCC] ✅ All {len(session["raw"])} files from the latest session are downloaded!")
+        return hexchat.EAT_ALL
+
+    hexchat.prnt(f"  ✅ Downloaded: {len(session["raw"]) - len(missing)}")
+    hexchat.prnt(f"  ❌ Missing: {len(missing)}")
+    hexchat.prnt("━" * 50)
+
+    for m in missing:
+        hexchat.prnt(f" 📍 {m}")
+
+    hexchat.prnt("━" * 50)
 
     return hexchat.EAT_ALL
 
 # -----------------------------
-# /sc — Discard + background cleanup
-# -----------------------------
-def sc_cmd(word, word_eol, userdata):
-    cleanup_background()
-    hexchat.prnt("[Search DCC] Staged selections discarded.")
-    return hexchat.EAT_ALL
-
-# -----------------------------
-# State tracking
+# Cleanup
 # -----------------------------
 def save_state(zip_path, extract_dir):
     with open(STATE_FILE, "a") as f:
         f.write(f"ZIP|{zip_path}\n")
         f.write(f"DIR|{extract_dir}\n")
 
-# -----------------------------
-# Cleanup logic (blocking)
-# -----------------------------
 def cleanup_all():
     if STATE_FILE.exists():
         for line in STATE_FILE.read_text().splitlines():
@@ -233,14 +306,8 @@ def cleanup_all():
     SELECTIONS_FILE.unlink(missing_ok=True)
     STATE_FILE.unlink(missing_ok=True)
 
-# -----------------------------
-# Cleanup wrapper (non-blocking)
-# -----------------------------
 def cleanup_background():
-    def worker():
-        cleanup_all()
-        hexchat.prnt("[Search DCC] Cleanup completed in background.")
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=cleanup_all, daemon=True).start()
 
 # -----------------------------
 # Register commands
@@ -248,6 +315,6 @@ def cleanup_background():
 hexchat.hook_command("ss", ss_cmd)
 hexchat.hook_command("se", se_cmd)
 hexchat.hook_command("sd", sd_cmd)
-hexchat.hook_command("sc", sc_cmd)
+hexchat.hook_command("sv", sv_cmd)
 
-hexchat.prnt("[Search DCC] Loaded: /ss /se /sd /sc")
+hexchat.prnt(f"{__module_name__} v{__module_version__} loaded with commands /ss /se /sd /sv")
