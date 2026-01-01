@@ -10,8 +10,8 @@
 - **`/ss <query>`** — Search via DCC bot, wait for ZIP, and stage results in FZF.
 - **`/se`** — Review and edit staged selections before committing.
 - **`/sd`** — Commit staged selections: send to chat, log in history, and cleanup temporary files.
-- **`/sc`** — Discard all staged selections and cleanup.
 - **`/sv`** — Perform strict verification of downloads of last session.
+- **`/sc`** — Discard all staged selections and cleanup.
 
 **Additional Features:**
 
@@ -22,7 +22,7 @@
 
 ## Installation
 
-1. Copy `search_dcc_staged_fzf.py` to HexChat’s addons folder:
+1. Copy `ssclient.py` to HexChat’s addons folder:
 
 ```bash
 ~/.config/hexchat/addons/
@@ -33,11 +33,11 @@
 - [Kitty Terminal](https://sw.kovidgoyal.net/kitty/)
 - [FZF](https://github.com/junegunn/fzf)
 
-3. Start HexChat. You should see:
-
+3. Start HexChat and load the python file:
 ```
-[Search DCC] Loaded: /ss /se /sd /sc
+py load ssclient.py
 ```
+You should see `[Search DCC] ver 3.0 loaded with commands /ss /se /sd /sv /sc`
 
 ---
 
@@ -61,13 +61,19 @@ Example:
 /se
 ```
 
-### Commit to Chat and Log History
+### Commit to Chat, Log History and clear zip and extracted folders
 
 ```text
 /sd
 ```
 
-### Discard Staged Selections
+### Perform strict verification of last session downloads
+
+```text
+/sv
+```
+
+### Discard Staged Selections along with zip files and extracted folders
 
 ```text
 /sc
@@ -92,7 +98,7 @@ To make FZF windows float and size nicely, add these to your `hyprland.conf`:
 
 ```text
 windowrule {
-  name = windowrule-88
+  name = windowrule-SearchDCC
   float = on
   size = (monitor_w*0.85) (monitor_h*0.45)
   move = ((monitor_w*0.075)) ((monitor_h*0.05))
@@ -102,7 +108,7 @@ windowrule {
 ```
 
 > Adjust size and move parameters as needed.
-> `class:^(SearchDCC)$` ensures only the plugin’s FZF windows are affected.
+> `class = ^(SearchDCC)$` ensures only the FZF windows created by the plugin are affected.
 
 ---
 
