@@ -1,7 +1,7 @@
 # DCC Search, Stage and Download Plugin
 
-**Version:** 2.9  
-**Description:** Stage search results from HexChat DCC transfers using FZF, review and edit selections, commit to chat, and maintain a history of downloads.
+**Version:** 3.0  
+**Description:** Stage search results from HexChat DCC transfers using FZF, review and edit selections, commit to chat, maintain a history of downloads, and perform strict verification.
 
 ---
 
@@ -11,10 +11,11 @@
 - **`/se`** — Review and edit staged selections before committing.
 - **`/sd`** — Commit staged selections: send to chat, log in history, and cleanup temporary files.
 - **`/sc`** — Discard all staged selections and cleanup.
+- **`/sv`** — Perform strict verification of downloads of last session.
 
 **Additional Features:**
 
-- Maintains the last 50 entries in `history.txt`.
+- `history.txt` stores history with session ID.
 - Uses **Kitty** + **FZF** for interactive selection.
 
 ---
@@ -81,7 +82,7 @@ Example:
 
   - `selections.txt` → Staged selections
   - `state.txt` → Tracks ZIPs and extracted directories
-  - `history.txt` → Last 50 committed entries
+  - `history.txt` → Contains committed entries separated with session ID
 
 ---
 
@@ -90,10 +91,14 @@ Example:
 To make FZF windows float and size nicely, add these to your `hyprland.conf`:
 
 ```text
-windowrulev2 = float,class:^(SearchDCC)$
-windowrulev2 = size 85% 45%,class:^(SearchDCC)$
-windowrulev2 = move 7.5% 5%,class:^(SearchDCC)$
-windowrulev2 = center 0,class:^(SearchDCC)$
+windowrule {
+  name = windowrule-88
+  float = on
+  size = (monitor_w*0.85) (monitor_h*0.45)
+  move = ((monitor_w*0.075)) ((monitor_h*0.05))
+  center = 0
+  match:class = ^(SearchDCC)$
+}
 ```
 
 > Adjust size and move parameters as needed.

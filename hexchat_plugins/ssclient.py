@@ -221,6 +221,13 @@ def sd_cmd(word, word_eol, userdata):
     return hexchat.EAT_ALL
 
 # -----------------------------
+# /sc — Discard staged selections & cleanup
+# -----------------------------
+def sc_cmd(word, word_eol, userdata):
+    cleanup_background()
+    hexchat.prnt("[Search DCC] All staged selections and temporary files discarded.")
+
+# -----------------------------
 # /sv — Verify latest session (STRICT)
 # -----------------------------
 def sv_cmd(word, word_eol, userdata):
