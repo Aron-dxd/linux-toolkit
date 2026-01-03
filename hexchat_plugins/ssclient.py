@@ -31,10 +31,13 @@ ZIP_WAIT_TIMEOUT = 30.0
 ZIP_POLL_INTERVAL = 0.5
 
 # -----------------------------
-# Canonical comparison (ONLY spaces → underscores)
+# Canonical comparison
 # -----------------------------
 def canon_compare(s: str) -> str:
-    return s.strip().replace(" ", "_").lower()
+    s = s.lower()
+    s = Path(s).stem
+    return re.sub(r"[^a-z0-9]", "", s)
+
 
 # -----------------------------
 # Extract requested filename from history line
@@ -256,28 +259,34 @@ def sv_cmd(word, word_eol, userdata):
 
     session = sessions[-1]
 
-    downloaded = {
-        canon_compare(f.name): f.name
-        for f in DOWNLOAD_DIR.iterdir()
-        if f.is_file()
-    }
+    VALID_EXT = {".pdf", ".epub", ".mobi", ".azw3"}
+
+    downloaded = {}
+    for f in DOWNLOAD_DIR.iterdir():
+        if f.is_file() and f.suffix.lower() in VALID_EXT:
+            downloaded[canon_compare(f.name)] = f.name
 
     missing = []
+    found = []
 
     for raw in session["raw"]:
         wanted = extract_requested_filename(raw)
-        key = canon_compare(wanted)
+        wanted_key = canon_compare(wanted)
 
-        if key not in downloaded:
-            missing.append(raw)  
+        if wanted_key in downloaded:
+            found.append((wanted, downloaded[wanted_key]))
+        else:
+            missing.append(wanted)
 
     hexchat.prnt(f"[Search DCC] Summary for session {session['id']}:")
 
     if not missing:
-        hexchat.prnt(f"[Search DCC] ✅ All {len(session["raw"])} files from the latest session are downloaded!")
+        hexchat.prnt(
+            f"[Search DCC] ✅ All {len(session['raw'])} files from the latest session are downloaded!"
+        )
         return hexchat.EAT_ALL
 
-    hexchat.prnt(f"  ✅ Downloaded: {len(session["raw"]) - len(missing)}")
+    hexchat.prnt(f"  ✅ Downloaded: {len(found)}")
     hexchat.prnt(f"  ❌ Missing: {len(missing)}")
     hexchat.prnt("━" * 50)
 
@@ -285,8 +294,8 @@ def sv_cmd(word, word_eol, userdata):
         hexchat.prnt(f" 📍 {m}")
 
     hexchat.prnt("━" * 50)
-
     return hexchat.EAT_ALL
+
 
 # -----------------------------
 # Cleanup
@@ -324,4 +333,4 @@ hexchat.hook_command("se", se_cmd)
 hexchat.hook_command("sd", sd_cmd)
 hexchat.hook_command("sv", sv_cmd)
 
-hexchat.prnt(f"{__module_name__} v{__module_version__} loaded with commands /ss /se /sd /sv")
+hexchat.prnt(f"{__module_name__} v{__module_version__} loaded with commands /ss /se /sd /sc /sv")
