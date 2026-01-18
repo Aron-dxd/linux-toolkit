@@ -12,4 +12,4 @@ Feel free to use any of the scripts as needed.
 
 - [**network_tools/**](network_tools/) – Scripts for monitoring, troubleshooting, and managing network-related tasks.
 
-- [**misc/**](misc/) – Miscellaneous experiments and tools that don’t fit into other categories.
+- [**mpc/**](mpv/) – mpv configs
