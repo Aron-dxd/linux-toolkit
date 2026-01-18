@@ -332,5 +332,6 @@ hexchat.hook_command("ss", ss_cmd)
 hexchat.hook_command("se", se_cmd)
 hexchat.hook_command("sd", sd_cmd)
 hexchat.hook_command("sv", sv_cmd)
+hexchat.hook_command("sc", sc_cmd)
 
 hexchat.prnt(f"{__module_name__} v{__module_version__} loaded with commands /ss /se /sd /sc /sv")
